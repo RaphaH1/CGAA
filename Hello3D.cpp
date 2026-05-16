@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 #include <assert.h>
 
 using namespace std;
@@ -39,11 +40,13 @@ const GLchar* vertexShaderSource = "#version 450\n"
 "layout (location = 0) in vec3 position;\n"
 "layout (location = 1) in vec3 color;\n"
 "uniform mat4 model;\n"
+"uniform float highlight;\n"
 "out vec4 finalColor;\n"
 "void main()\n"
 "{\n"
 "gl_Position = model * vec4(position, 1.0);\n"
-"finalColor = vec4(color, 1.0);\n"
+"vec3 c = color + vec3(highlight * 0.25);\n"
+"finalColor = vec4(clamp(c, 0.0, 1.0), 1.0);\n"
 "}\0";
 
 // Código fonte do Fragment Shader
@@ -55,23 +58,37 @@ const GLchar* fragmentShaderSource = "#version 450\n"
 "color = finalColor;\n"
 "}\n\0";
 
-// --- Controles de rotação ---
-bool rotateX = false, rotateY = false, rotateZ = false;
+// --- Modo de transformação e eixo ativo ---
+enum class TransformMode { NONE, ROTATE, TRANSLATE, SCALE };
+enum class Axis { NONE, X, Y, Z };
 
-// --- Cubo selecionado atualmente (0 ou 1) ---
-int selectedCube = 0;
+TransformMode currentMode = TransformMode::NONE;
+Axis          currentAxis = Axis::NONE;
 
-// --- Estado de cada cubo: translação e escala ---
-struct CubeState {
-	glm::vec3 position;
-	float scale;
+// --- Struct que representa um objeto 3D na cena ---
+struct Object3D {
+	GLuint    VAO       = 0;
+	int       numVerts  = 0;
+	glm::vec3 position  = glm::vec3(0.0f);
+	glm::vec3 scale     = glm::vec3(1.0f);
+	float     rotAngleX = 0.0f;
+	float     rotAngleY = 0.0f;
+	float     rotAngleZ = 0.0f;
+
+	glm::mat4 modelMatrix() const {
+		glm::mat4 m = glm::mat4(1.0f);
+		m = glm::translate(m, position);
+		m = glm::rotate(m, rotAngleX, glm::vec3(1.0f, 0.0f, 0.0f));
+		m = glm::rotate(m, rotAngleY, glm::vec3(0.0f, 1.0f, 0.0f));
+		m = glm::rotate(m, rotAngleZ, glm::vec3(0.0f, 0.0f, 1.0f));
+		m = glm::scale(m, scale);
+		return m;
+	}
 };
 
-// Dois cubos na cena
-CubeState cubes[2] = {
-	{ glm::vec3(-0.6f, 0.0f, 0.0f), 0.4f },
-	{ glm::vec3( 0.6f, 0.0f, 0.0f), 0.4f }
-};
+// --- Objetos na cena e índice do selecionado ---
+vector<Object3D> objects;
+int selectedIndex = 0;
 
 // Função MAIN
 int main()
@@ -100,18 +117,43 @@ int main()
 	GLuint shaderID = setupShader();
 	GLuint VAO      = setupGeometry();
 
+	// --- Criação dos objetos na cena ---
+	{
+		Object3D obj;
+		obj.VAO      = VAO;
+		obj.numVerts = 36;
+		obj.position = glm::vec3(-0.55f, 0.0f, 0.0f);
+		obj.scale    = glm::vec3(0.4f);
+		objects.push_back(obj);
+	}
+	{
+		Object3D obj;
+		obj.VAO      = VAO;
+		obj.numVerts = 36;
+		obj.position = glm::vec3( 0.55f, 0.0f, 0.0f);
+		obj.scale    = glm::vec3(0.4f);
+		objects.push_back(obj);
+	}
+	{
+		Object3D obj;
+		obj.VAO      = VAO;
+		obj.numVerts = 36;
+		obj.position = glm::vec3(0.0f, 0.55f, 0.0f);
+		obj.scale    = glm::vec3(0.25f);
+		objects.push_back(obj);
+	}
+
 	glUseProgram(shaderID);
-	GLint modelLoc = glGetUniformLocation(shaderID, "model");
+	GLint modelLoc     = glGetUniformLocation(shaderID, "model");
+	GLint highlightLoc = glGetUniformLocation(shaderID, "highlight");
 
 	glEnable(GL_DEPTH_TEST);
 
 	cout << "\n=== CONTROLES ===" << endl;
-	cout << "1 / 2      : selecionar cubo 1 ou 2" << endl;
-	cout << "X / Y / Z  : rotacionar no eixo" << endl;
-	cout << "W / S      : mover no eixo Z" << endl;
-	cout << "A / D      : mover no eixo X" << endl;
-	cout << "I / J      : mover no eixo Y" << endl;
-	cout << "[ / ]      : diminuir / aumentar escala" << endl;
+	cout << "TAB        : selecionar proximo objeto" << endl;
+	cout << "R          : modo Rotacao   -> X, Y ou Z -> setas" << endl;
+	cout << "T          : modo Translacao -> X, Y ou Z -> setas" << endl;
+	cout << "S          : modo Escala    -> X, Y ou Z -> setas (sem eixo = uniforme)" << endl;
 	cout << "ESC        : sair" << endl;
 
 	while (!glfwWindowShouldClose(window))
@@ -124,34 +166,19 @@ int main()
 		glLineWidth(10);
 		glPointSize(20);
 
-		float angle = (GLfloat)glfwGetTime();
-
-		glBindVertexArray(VAO);
-
-		// Desenha os dois cubos
-		for (int i = 0; i < 2; i++)
+		for (int i = 0; i < (int)objects.size(); i++)
 		{
-			glm::mat4 model = glm::mat4(1.0f);
+			glBindVertexArray(objects[i].VAO);
 
-			// Translação
-			model = glm::translate(model, cubes[i].position);
-
-			// Rotação (aplicada apenas ao cubo selecionado, mas pode ser global)
-			if (rotateX)
-				model = glm::rotate(model, angle, glm::vec3(1.0f, 0.0f, 0.0f));
-			else if (rotateY)
-				model = glm::rotate(model, angle, glm::vec3(0.0f, 1.0f, 0.0f));
-			else if (rotateZ)
-				model = glm::rotate(model, angle, glm::vec3(0.0f, 0.0f, 1.0f));
-
-			// Escala uniforme
-			model = glm::scale(model, glm::vec3(cubes[i].scale));
-
+			glm::mat4 model = objects[i].modelMatrix();
 			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
+			// Destaque visual para o objeto selecionado
+			glUniform1f(highlightLoc, (i == selectedIndex) ? 1.0f : 0.0f);
+
 			// 36 vértices = 6 faces * 2 triângulos * 3 vértices
-			glDrawArrays(GL_TRIANGLES, 0, 36);
-			glDrawArrays(GL_POINTS, 0, 36);
+			glDrawArrays(GL_TRIANGLES, 0, objects[i].numVerts);
+			glDrawArrays(GL_POINTS,    0, objects[i].numVerts);
 		}
 
 		glBindVertexArray(0);
@@ -168,35 +195,74 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 {
 	const float step  = 0.05f;
 	const float sStep = 0.05f;
+	const float rStep = glm::radians(5.0f);
 
 	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GL_TRUE);
 
-	// Selecionar cubo
-	if (key == GLFW_KEY_1 && action == GLFW_PRESS) { selectedCube = 0; cout << "Cubo 1 selecionado" << endl; }
-	if (key == GLFW_KEY_2 && action == GLFW_PRESS) { selectedCube = 1; cout << "Cubo 2 selecionado" << endl; }
+	// Selecionar próximo objeto (TAB cicla pelo vector)
+	if (key == GLFW_KEY_TAB && action == GLFW_PRESS)
+	{
+		selectedIndex = (selectedIndex + 1) % (int)objects.size();
+		currentMode = TransformMode::NONE;
+		currentAxis = Axis::NONE;
+		cout << "Objeto " << selectedIndex << " selecionado" << endl;
+	}
 
-	// Rotação
-	if (key == GLFW_KEY_X && action == GLFW_PRESS) { rotateX = true;  rotateY = false; rotateZ = false; }
-	if (key == GLFW_KEY_Y && action == GLFW_PRESS) { rotateX = false; rotateY = true;  rotateZ = false; }
-	if (key == GLFW_KEY_Z && action == GLFW_PRESS) { rotateX = false; rotateY = false; rotateZ = true;  }
+	// Seleção de modo de transformação
+	if (action == GLFW_PRESS)
+	{
+		if (key == GLFW_KEY_R) { currentMode = TransformMode::ROTATE;    currentAxis = Axis::NONE; cout << "[Modo: ROTACAO]    -> X, Y ou Z" << endl; }
+		if (key == GLFW_KEY_T) { currentMode = TransformMode::TRANSLATE; currentAxis = Axis::NONE; cout << "[Modo: TRANSLACAO] -> X, Y ou Z" << endl; }
+		if (key == GLFW_KEY_S) { currentMode = TransformMode::SCALE;     currentAxis = Axis::NONE; cout << "[Modo: ESCALA]     -> X, Y ou Z (sem eixo = uniforme)" << endl; }
 
-	// Translação — WASD para X/Z, I/J para Y
-	// Aceita PRESS e REPEAT para segurar a tecla
+		// Seleção de eixo
+		if (key == GLFW_KEY_X) { currentAxis = Axis::X; cout << "  eixo X" << endl; }
+		if (key == GLFW_KEY_Y) { currentAxis = Axis::Y; cout << "  eixo Y" << endl; }
+		if (key == GLFW_KEY_Z) { currentAxis = Axis::Z; cout << "  eixo Z" << endl; }
+	}
+
+	// Aplicação da transformação (PRESS e REPEAT para segurar a tecla)
 	if (action == GLFW_PRESS || action == GLFW_REPEAT)
 	{
-		if (key == GLFW_KEY_D) cubes[selectedCube].position.x += step;
-		if (key == GLFW_KEY_A) cubes[selectedCube].position.x -= step;
-		if (key == GLFW_KEY_I) cubes[selectedCube].position.y += step;
-		if (key == GLFW_KEY_J) cubes[selectedCube].position.y -= step;
-		if (key == GLFW_KEY_W) cubes[selectedCube].position.z += step;
-		if (key == GLFW_KEY_S) cubes[selectedCube].position.z -= step;
+		int sign = 0;
+		if (key == GLFW_KEY_UP   || key == GLFW_KEY_W) sign = +1;
+		if (key == GLFW_KEY_DOWN || key == GLFW_KEY_S) sign = -1;
 
-		// Escala uniforme
-		if (key == GLFW_KEY_RIGHT_BRACKET) // ]
-			cubes[selectedCube].scale += sStep;
-		if (key == GLFW_KEY_LEFT_BRACKET)  // [
-			cubes[selectedCube].scale = glm::max(0.05f, cubes[selectedCube].scale - sStep);
+		if (sign != 0 && currentMode != TransformMode::NONE)
+		{
+			Object3D& obj = objects[selectedIndex];
+
+			if (currentMode == TransformMode::ROTATE)
+			{
+				float delta = sign * rStep;
+				if      (currentAxis == Axis::X) obj.rotAngleX += delta;
+				else if (currentAxis == Axis::Y) obj.rotAngleY += delta;
+				else if (currentAxis == Axis::Z) obj.rotAngleZ += delta;
+				else                             obj.rotAngleY += delta;
+			}
+			else if (currentMode == TransformMode::TRANSLATE)
+			{
+				float delta = sign * step;
+				if      (currentAxis == Axis::X) obj.position.x += delta;
+				else if (currentAxis == Axis::Y) obj.position.y += delta;
+				else if (currentAxis == Axis::Z) obj.position.z += delta;
+				else                             obj.position.x += delta;
+			}
+			else if (currentMode == TransformMode::SCALE)
+			{
+				float delta = sign * sStep;
+				if      (currentAxis == Axis::X) obj.scale.x = glm::max(0.05f, obj.scale.x + delta);
+				else if (currentAxis == Axis::Y) obj.scale.y = glm::max(0.05f, obj.scale.y + delta);
+				else if (currentAxis == Axis::Z) obj.scale.z = glm::max(0.05f, obj.scale.z + delta);
+				else {
+					// Escala uniforme
+					obj.scale.x = glm::max(0.05f, obj.scale.x + delta);
+					obj.scale.y = glm::max(0.05f, obj.scale.y + delta);
+					obj.scale.z = glm::max(0.05f, obj.scale.z + delta);
+				}
+			}
+		}
 	}
 }
 
