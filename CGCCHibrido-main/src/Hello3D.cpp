@@ -23,6 +23,12 @@ using namespace std;
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <fstream>
+#include <sstream>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 
 // Protótipo da função de callback de teclado
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
@@ -37,11 +43,14 @@ const GLuint WIDTH = 1000, HEIGHT = 1000;
 // Código fonte do Vertex Shader (em GLSL): ainda hardcoded
 const GLchar* vertexShaderSource = "#version 450\n"
 "layout (location = 0) in vec3 position;\n"
-"layout (location = 1) in vec3 color;\n"
+"layout (location = 1) in vec2 texCoord;\n"
 "uniform mat4 model;\n"
-"out vec4 finalColor;\n"
+"out vec2 TexCoord;\n"
 "void main()\n"
 "{\n"
+"gl_Position = model * vec4(position, 1.0);\n"
+"TexCoord = texCoord;\n"
+"}\0";
 //...pode ter mais linhas de código aqui!
 "gl_Position = model * vec4(position, 1.0);\n"
 "finalColor = vec4(color, 1.0);\n"
@@ -49,14 +58,69 @@ const GLchar* vertexShaderSource = "#version 450\n"
 
 //Códifo fonte do Fragment Shader (em GLSL): ainda hardcoded
 const GLchar* fragmentShaderSource = "#version 450\n"
-"in vec4 finalColor;\n"
+"in vec2 TexCoord;\n"
 "out vec4 color;\n"
+"uniform sampler2D texture1;\n"
 "void main()\n"
 "{\n"
-"color = finalColor;\n"
+"color = texture(texture1, TexCoord);\n"
 "}\n\0";
 
 bool rotateX=false, rotateY=false, rotateZ=false;
+GLuint textureID;
+
+void loadTexture()
+{
+	glGenTextures(1, &textureID);
+
+	glBindTexture(GL_TEXTURE_2D, textureID);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	int width, height, nrChannels;
+
+	unsigned char* data = stbi_load(
+		"textura.png",
+		&width,
+		&height,
+		&nrChannels,
+		0
+	);
+
+	if (data)
+	{
+		GLenum format = GL_RGB;
+
+		if (nrChannels == 4)
+			format = GL_RGBA;
+
+		glTexImage2D(
+			GL_TEXTURE_2D,
+			0,
+			format,
+			width,
+			height,
+			0,
+			format,
+			GL_UNSIGNED_BYTE,
+			data
+		);
+
+		glGenerateMipmap(GL_TEXTURE_2D);
+
+		cout << "Textura carregada!" << endl;
+	}
+	else
+	{
+		cout << "Erro ao carregar textura!" << endl;
+	}
+
+	stbi_image_free(data);
+}
 
 // Função MAIN
 int main()
@@ -109,6 +173,8 @@ int main()
 	// Gerando um buffer simples, com a geometria de um triângulo
 	GLuint VAO = setupGeometry();
 
+	loadTexture();
+
 
 	glUseProgram(shaderID);
 
@@ -156,6 +222,8 @@ int main()
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 		// Chamada de desenho - drawcall
 		// Poligono Preenchido - GL_TRIANGLES
+
+		glBindTexture(GL_TEXTURE_2D, textureID);
 		
 		glBindVertexArray(VAO);
 		glDrawArrays(GL_TRIANGLES, 0, 18);
@@ -268,37 +336,36 @@ int setupGeometry()
 	// sequencial, já visando mandar para o VBO (Vertex Buffer Objects)
 	// Cada atributo do vértice (coordenada, cores, coordenadas de textura, normal, etc)
 	// Pode ser arazenado em um VBO único ou em VBOs separados
-	GLfloat vertices[] = {
+GLfloat vertices[] = {
+	// Base
+	-0.5, -0.5, -0.5,   0.0, 0.0,
+	-0.5, -0.5,  0.5,   0.0, 1.0,
+	 0.5, -0.5, -0.5,   1.0, 0.0,
 
-		//Base da pirâmide: 2 triângulos
-		//x    y    z    r    g    b
-		-0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-		-0.5, -0.5,  0.5, 0.0, 1.0, 1.0,
-		 0.5, -0.5, -0.5, 1.0, 0.0, 1.0,
+	-0.5, -0.5,  0.5,   0.0, 1.0,
+	 0.5, -0.5,  0.5,   1.0, 1.0,
+	 0.5, -0.5, -0.5,   1.0, 0.0,
 
-		 -0.5, -0.5, 0.5, 1.0, 1.0, 0.0,
-		  0.5, -0.5,  0.5, 0.0, 1.0, 1.0,
-		  0.5, -0.5, -0.5, 1.0, 0.0, 1.0,
+	// Frente
+	-0.5, -0.5, -0.5,   0.0, 0.0,
+	 0.0,  0.5,  0.0,   0.5, 1.0,
+	 0.5, -0.5, -0.5,   1.0, 0.0,
 
-		 //
-		 -0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
-		  0.0,  0.5,  0.0, 1.0, 1.0, 0.0,
-		  0.5, -0.5, -0.5, 1.0, 1.0, 0.0,
+	// Esquerda
+	-0.5, -0.5, -0.5,   0.0, 0.0,
+	 0.0,  0.5,  0.0,   0.5, 1.0,
+	-0.5, -0.5,  0.5,   1.0, 0.0,
 
-		  -0.5, -0.5, -0.5, 1.0, 0.0, 1.0,
-		  0.0,  0.5,  0.0, 1.0, 0.0, 1.0,
-		  -0.5, -0.5, 0.5, 1.0, 0.0, 1.0,
+	// Traseira
+	-0.5, -0.5,  0.5,   0.0, 0.0,
+	 0.0,  0.5,  0.0,   0.5, 1.0,
+	 0.5, -0.5,  0.5,   1.0, 0.0,
 
-		   -0.5, -0.5, 0.5, 1.0, 1.0, 0.0,
-		  0.0,  0.5,  0.0, 1.0, 1.0, 0.0,
-		  0.5, -0.5, 0.5, 1.0, 1.0, 0.0,
-
-		   0.5, -0.5, 0.5, 0.0, 1.0, 1.0,
-		  0.0,  0.5,  0.0, 0.0, 1.0, 1.0,
-		  0.5, -0.5, -0.5, 0.0, 1.0, 1.0,
-
-
-	};
+	// Direita
+	 0.5, -0.5,  0.5,   0.0, 0.0,
+	 0.0,  0.5,  0.0,   0.5, 1.0,
+	 0.5, -0.5, -0.5,   1.0, 0.0,
+};
 
 	GLuint VBO, VAO;
 
@@ -327,11 +394,11 @@ int setupGeometry()
 	// Deslocamento a partir do byte zero 
 	
 	//Atributo posição (x, y, z)
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid*)0);
 	glEnableVertexAttribArray(0);
 
 	//Atributo cor (r, g, b)
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), (GLvoid*)(3*sizeof(GLfloat)));
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid*)(3*sizeof(GLfloat)));
 	glEnableVertexAttribArray(1);
 
 
